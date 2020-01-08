@@ -571,7 +571,7 @@ class homekit(sofabase):
             
             try:
                 self.log.info('Starting homekit')
-                await self.dataset.ingest({'accessorymap': self.load_cache(self.dataset.config['accessory_map'])})
+                await self.dataset.ingest({'accessorymap': self.load_cache(self.dataset.config['accessory_map'])}, mergeReplace=True)
                 #self.log.info('Known devices: %s' % self.dataset.nativeDevices['accessorymap'])
                 self.getNewAid()
                 self.accloop=asyncio.new_event_loop()
@@ -649,6 +649,7 @@ class homekit(sofabase):
                         self.log.info('Added accessory: %s %s' % (accitem['services'][0], newdev))
                     else:
                         self.log.info('.! Did not add bridge device %s' % accitem)
+                self.log.info('.. finished building bridge')
             except:
                 self.log.error('Error during bridge building', exc_info=True)
 
@@ -707,7 +708,7 @@ class homekit(sofabase):
                     except:
                         self.log.info('TS', exc_info=True)
                 #self.log.info('am: %s' % accmap)
-                await self.dataset.ingest({"accessorymap": accmap})
+                await self.dataset.ingest({"accessorymap": accmap}, mergeReplace=True)
                 self.save_cache(self.dataset.config['accessory_map'], accmap)
             except:
                 self.log.error('Error in virt aid', exc_info=True)
@@ -820,7 +821,7 @@ class homekit(sofabase):
         async def updateAccessoryMap(self, adapter, objlist):
             
             for accid, acc in self.acc.accessories:
-                self.dataset.ingest({"accessorymap": { acc.display_name : { "id":accid, "path": objlist}}})
+                self.dataset.ingest({"accessorymap": { acc.display_name : { "id":accid, "path": objlist}}}, mergeReplace=True)
              
         async def virtualEventHandler(self, event, source, deviceId, message):
             
