@@ -18,7 +18,6 @@ import json
 import asyncio
 import aiohttp
 import logging
-import pickle
 import signal
 
 import pyhap.util as util
@@ -223,7 +222,6 @@ class Switch(SofaAccessory):
         except:
             self.log.error('!! error setting power state', exc_info=True)
             
-
 class TemperatureSensor(SofaAccessory):
 
     category = pyhap.const.CATEGORY_SENSOR
@@ -243,80 +241,6 @@ class TemperatureSensor(SofaAccessory):
                 self.char_temp.set_value(value['value'])
         except:
             self.log.error('!! error setting temperature', exc_info=True)
-
-  
-
-class OldTelevision(SofaAccessory):
-
-    category = pyhap.const.CATEGORY_TELEVISION
-    
-    def add_chars(self):
-        try:
-            tv_service = self.add_preload_service('Television', ['Name','ConfiguredName','Active','ActiveIdentifier','RemoteKey', 'SleepDiscoveryMode'])
-            serv_tv = self.add_preload_service('Television', chars=['Active', 'ActiveIdentifier', 'ConfiguredName', 'SleepDiscoveryMode', 'RemoteKey'])
-            serv_tvspeaker = self.add_preload_service('TelevisionSpeaker', chars=['Mute', 'Volume', 'VolumeSelector'])
-            self.char_Active = serv_tv.configure_char('Active', setter_callback=self.set_active)
-            self.activeidentifier = serv_tv.configure_char('ActiveIdentifier', setter_callback=self.set_activeidentifier)
-            self.configuredname = serv_tv.configure_char('ConfiguredName')
-            self.sleepdiscoverymode = serv_tv.configure_char('SleepDiscoveryMode', setter_callback=self.set_sleepdiscoverymode)
-            self.remotekey = serv_tv.configure_char('RemoteKey', setter_callback=self.set_remotekey)
-            
-            self.char_mute = serv_tvspeaker.configure_char('Mute', setter_callback=self.set_mute)
-            self.char_volume = serv_tvspeaker.configure_char('Volume', setter_callback=self.set_volume)
-            self.char_volumeselector = serv_tvspeaker.configure_char('VolumeSelector', setter_callback=self.set_volumeselector)
-        
-            self.configuredname.set_value('TV')
-            self.sleepdiscoverymode.set_value(1)
-            self.set_primary_service(serv_tv)
-        except:
-            self.log.error("!! error adding characteristics", exc_info=True)  
-
-    def set_activeidentifier(self, value):
-        self.log.info("TV Active Identifier: %s", value)
-
-    def set_active(self, value):
-        try:
-            if value:
-                asyncio.run_coroutine_threadsafe(self.sendDirective('Alexa.PowerController','TurnOn'), loop=self.loop)
-            else:
-                asyncio.run_coroutine_threadsafe(self.sendDirective('Alexa.PowerController','TurnOff'), loop=self.loop)
-        except:
-            self.log.error('Error in set TV Active OnOff', exc_info=True)
-
-    def set_sleepdiscoverymode(self, value):
-        self.log.info("TV sleep discovery mode : %s", value)
-
-    def set_remotekey(self, value):
-        try:
-            vals={4:'CursorUp', 5:'CursorDown', 6:'CursorLeft', 7:'CursorRight', 8: 'DpadCenter', 9: 'Exit', 15: 'Home'}
-            asyncio.run_coroutine_threadsafe(self.sendDirective('Alexa.RemoteController', 'PressRemoteButton', { 'buttonName': vals[value] }))
-        except:
-            self.log.error('Error in set TV Active OnOff', exc_info=True)
-
-    def set_mute(self, value):
-        self.log.info("TV set_mute : %s", value)
-
-    def set_volume(self, value):
-        self.log.info("TV set_volume : %s", value)
-
-    def set_volumeselector(self, value):
-        self.log.info("TV set_volumeselector : %s", value)
-
-    def prop_powerState(self, value):
-        try:
-            if self.reachable and value=='ON':
-                self.char_Active.set_value(True)
-            else:
-                self.char_Active.set_value(False)
-        except:
-            self.log.error('!! error setting power state', exc_info=True)
-            
-    def prop_volume(self, value):
-        try:
-            if self.reachable:
-                self.char_volume.set_value(value)
-        except:
-            self.log.error('!! error setting volume', exc_info=True)
 
 class Television(SofaAccessory):
 
@@ -351,7 +275,7 @@ class Television(SofaAccessory):
 
             #self.tv_speaker_service.configure_char('VolumeControlType', value=3) relative volume
             self.tv_speaker_service.configure_char('VolumeControlType', value=3)
-            self.tv_speaker_service.configure_char('Mute', setter_callback=self.set_mute)
+            self.tv_speaker_service.configure_char('Mute', setter_callback=self.set_Mute)
             #self.VolumeSelector=self.tv_speaker_service.configure_char('VolumeSelector', setter_callback=self.set_VolumeSelector)
             self.Volume=self.tv_speaker_service.configure_char('Volume', setter_callback=self.set_Volume)
         except:
@@ -379,7 +303,7 @@ class Television(SofaAccessory):
         except:
             self.log.error('Error in set TV Active OnOff', exc_info=True)
 
-    def set_mute(self, value):
+    def set_Mute(self, value):
         self.log.info("TV set_mute : %s", value)
 
     def set_Volume(self, value):
@@ -555,10 +479,9 @@ class homekit(sofabase):
             self.notify=notify
             self.polltime=5
             self.maxaid=8
-            self.persistfile=self.dataset.config['pickle_file']
             self.accessorymap=self.dataset.config['accessory_map']
             self.executor=executor
-            self.skip=['savedState', 'colorTemperatureInKelvin', 'pressState', 'onLevel', 'powerLevel', 'input']
+            self.skip=['savedState', 'colorTemperatureInKelvin', 'pressState', 'onLevel', 'powerLevel', 'input', 'mode']
             
             if not loop:
                 self.loop = asyncio.new_event_loop()
@@ -666,27 +589,6 @@ class homekit(sofabase):
             except:
                 self.log.error('Error during getMaxAid', exc_info=True)
                 return None
-                
-                    
-                
-        def getAccessorySet(self):
-            
-            try:
-                self.log.info('Loading persistence file if it exists')
-                self.loadFromPersist(self.persistfile)
-                self.acc=None
-        
-                if not self.acc:
-                    self.log.info('No persistence file, creating Bridge instance')
-                    address = ("", self.dataset.config['bridge_port'])
-                    #self.acc = Bridge(address=address, display_name=self.dataset.config['display_name'], pincode=self.dataset.config['pin_code'])
-                    self.acc = Bridge(address=address, display_name=self.dataset.config['display_name'])
-
-                else:
-                    self.log.info('Loaded persistence file')
-            except:
-                self.log.error('Error accessory startup Data', exc_info=True)
-
 
         async def saveAidMap(self):
             
@@ -721,7 +623,7 @@ class homekit(sofabase):
                     
                 if device['friendlyName'] in self.dataset.nativeDevices['accessorymap']:
                     if self.dataset.nativeDevices['accessorymap'][device['friendlyName']]['device']['endpointId']!=device['endpointId']:
-                        self.log.info('Fixing changed endpointId for %s from %s to %s' % (device['friendlyName'], self.dataset.nativeDevices['accessorymap'][device['friendlyName']]['endpointId'], device['endpointId']))
+                        self.log.info('Fixing changed endpointId for %s from %s to %s' % (device['friendlyName'], self.dataset.nativeDevices['accessorymap'][device['friendlyName']]['device']['endpointId'], device['endpointId']))
                         self.dataset.nativeDevices['accessorymap'][device['friendlyName']]['device']=device                 
                         self.save_cache(self.dataset.config['accessory_map'], self.dataset.nativeDevices['accessorymap'])
                     response=await self.dataset.requestReportState(device['endpointId'])
@@ -803,21 +705,6 @@ class homekit(sofabase):
         
             #self.log.setLevel(logging.DEBUG)        
 
-
-        def loadFromPersist(self, persistfile):
-        
-            try:
-                if os.path.exists(persistfile):
-                    with open(persistfile, "rb") as f:
-                        self.acc = pickle.load(f)
-                        self.log.info('Loaded data from persistence file: %s' % os.path.realpath(f.name))
-                else:
-                    self.acc=None
-            except:
-                self.log.error('Error loading cached data', exc_info=True)
-                self.acc = None
-         
-         
         async def updateAccessoryMap(self, adapter, objlist):
             
             for accid, acc in self.acc.accessories:
@@ -849,7 +736,7 @@ class homekit(sofabase):
                 try:
                     getattr(acc, 'prop_%s' % prop['name'])(prop['value'])
                 except AttributeError:
-                    self.log.info('.. No property setter for %s on %s' % (prop['name'], deviceId))
+                    self.log.info('.. No property setter for %s on %s :: %s' % (prop['name'], deviceId, prop))
                 except:
                     self.log.error('Error getting property setter: %s %s' % (prop['name'], deviceId), exc_info=True)
 
