@@ -6,8 +6,7 @@ sys.path.append(os.path.dirname(__file__))
 sys.path.append(os.path.join(os.path.dirname(__file__),'../../base'))
 from sofacollector import SofaCollector
 
-from sofabase import sofabase
-from sofabase import adapterbase
+from sofabase import sofabase, adapterbase, configbase
 import devices
 
 import math
@@ -94,18 +93,20 @@ class SofaAccessory(Accessory):
     async def sendDirective(self, namespace, name, payload={}):
             
         try:
-            self.adapterUrl=self.adapter.dataset.adapters[self.remoteadapter]['url']
+            #self.adapterUrl=self.adapter.dataset.adapters[self.remoteadapter]['url']
             directive=await self.createDirective(namespace, name, payload)
             self.log.info('>> sending %s.%s.%s=%s' % (self.endpointId, namespace, name, payload))
-            headers = { "Content-type": "text/xml" }
-            async with aiohttp.ClientSession() as client:
-                response=await client.post(self.adapterUrl, data=json.dumps(directive), headers=headers)
-                result=await response.read()
-                self.log.info('<< response %s' % result)
-                return result
+            return await self.adapter.dataset.sendDirectiveToAdapter(directive)
+        
+            #headers = { "Content-type": "text/xml" }
+            #async with aiohttp.ClientSession() as client:
+            #    response=await client.post(self.adapterUrl, data=json.dumps(directive), headers=headers)
+            #    result=await response.read()
+            #    self.log.info('<< response %s' % result)
+            #    return result
         except:
             self.log.error("!! send command error",exc_info=True)      
-            return {}
+        return {}
 
 class LightBulb(SofaAccessory):
 
@@ -470,16 +471,31 @@ class Speaker(SofaAccessory):
 
 
 class homekit(sofabase):
-
-    class adapterProcess(SofaCollector.collectorAdapter):
     
-        def __init__(self, log=None, loop=None, dataset=None, notify=None, request=None, executor=None,  **kwargs):
+    class adapter_config(configbase):
+    
+        def adapter_fields(self):
+            self.accessory_map=self.set_or_default('accessory_map', mandatory=True)
+            self.display_name=self.set_or_default('display_name', default="Sofa Bridge")
+            self.pin_code=self.set_or_default("pin_code", default="203-23-999")
+            self.bridge_port=self.set_or_default("bridge_porte", default=51111)
+            self.accessory_port=self.set_or_default("accessory_port", default=51826)
+            
+    class adapterProcess(SofaCollector.collectorAdapter):
+
+        @property
+        def collector_categories(self):
+            return ['DEVICE', 'TEMPERATURE_SENSOR', 'THERMOSTAT', 'LIGHT', 'CONTACT_SENSOR', 'TV']    
+    
+        def __init__(self, log=None, loop=None, dataset=None, notify=None, request=None, executor=None, config=None, **kwargs):
+            self.config=config
+            self.bridge=None
             self.dataset=dataset
+            self.accessorymap=self.config.accessory_map
             self.log=log
             self.notify=notify
             self.polltime=5
             self.maxaid=8
-            self.accessorymap=self.dataset.config['accessory_map']
             self.executor=executor
             self.skip=['savedState', 'colorTemperatureInKelvin', 'pressState', 'onLevel', 'powerLevel', 'input', 'mode']
             
@@ -490,23 +506,35 @@ class homekit(sofabase):
             self.addExtraLogs()
 
 
+        async def post_activate(self):
+            
+            try:
+                # TODO/CHEESE - if this is re-run after re-activation (such as hub restarting) it gets stuck with address in
+                # use because it's already running.  Decide whether to kill it somehow and restart or let it live.
+                # for now if the bridge exists, just skip it
+                
+                if not self.bridge:
+                    self.log.info('Starting homekit post activate')
+                    await self.dataset.ingest({'accessorymap': self.load_cache(self.config.accessory_map)}, mergeReplace=True)
+                    #self.log.info('Known devices: %s' % self.dataset.nativeDevices['accessorymap'])
+                    self.getNewAid()
+                    self.driver = AccessoryDriver(port=self.config.accessory_port, persist_file='/opt/sofa-server/cache/accessory.state', pincode=self.config.pin_code.encode('utf-8'))
+    
+                    self.buildBridge()
+                    self.driver.add_accessory(accessory=self.bridge)
+                    await self.saveAidMap()
+                    self.log.info('PIN: %s' % self.driver.state.pincode)
+                    signal.signal(signal.SIGTERM, self.driver.signal_handler)
+                    self.executor.submit(self.driver.start)
+                    self.log.info('Accessory Bridge Driver started')
+            except:
+                self.log.error('Error during startup', exc_info=True)
+  
+
         async def start(self):
             
             try:
                 self.log.info('Starting homekit')
-                await self.dataset.ingest({'accessorymap': self.load_cache(self.dataset.config['accessory_map'])}, mergeReplace=True)
-                #self.log.info('Known devices: %s' % self.dataset.nativeDevices['accessorymap'])
-                self.getNewAid()
-                self.accloop=asyncio.new_event_loop()
-                self.driver = AccessoryDriver(port=self.dataset.config['accessory_port'], persist_file='/opt/sofa-server/cache/accessory.state', pincode=self.dataset.config['pin_code'].encode('utf-8'))
-
-                self.buildBridge()
-                self.driver.add_accessory(accessory=self.bridge)
-                await self.saveAidMap()
-                self.log.info('PIN: %s' % self.driver.state.pincode)
-                signal.signal(signal.SIGTERM, self.driver.signal_handler)
-                self.executor.submit(self.driver.start)
-                self.log.info('Accessory Bridge Driver started')
             except:
                 self.log.error('Error during startup', exc_info=True)
                 
@@ -611,7 +639,7 @@ class homekit(sofabase):
                         self.log.info('TS', exc_info=True)
                 #self.log.info('am: %s' % accmap)
                 await self.dataset.ingest({"accessorymap": accmap}, mergeReplace=True)
-                self.save_cache(self.dataset.config['accessory_map'], accmap)
+                self.save_cache(self.config.accessory_map, accmap)
             except:
                 self.log.error('Error in virt aid', exc_info=True)
                 
@@ -625,7 +653,7 @@ class homekit(sofabase):
                     if self.dataset.nativeDevices['accessorymap'][device['friendlyName']]['device']['endpointId']!=device['endpointId']:
                         self.log.info('Fixing changed endpointId for %s from %s to %s' % (device['friendlyName'], self.dataset.nativeDevices['accessorymap'][device['friendlyName']]['device']['endpointId'], device['endpointId']))
                         self.dataset.nativeDevices['accessorymap'][device['friendlyName']]['device']=device                 
-                        self.save_cache(self.dataset.config['accessory_map'], self.dataset.nativeDevices['accessorymap'])
+                        self.save_cache(self.config.accessory_map, self.dataset.nativeDevices['accessorymap'])
                     response=await self.dataset.requestReportState(device['endpointId'])
                     #self.log.info('Already know about: %s' % device['friendlyName'])
                     return True
