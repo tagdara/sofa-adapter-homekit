@@ -61,7 +61,7 @@ class SofaAccessory(Accessory):
         try:
             if value['value']=='UNREACHABLE':
                 self.reachable=False
-                if getattr(self,'char_On'):
+                if getattr(self, 'char_On', False):
                     self.char_On.set_value(False)
             else:
                 self.reachable=True
@@ -307,6 +307,11 @@ class Television(SofaAccessory):
     def set_Mute(self, value):
         self.log.info("TV set_mute : %s", value)
 
+    def set_mute(self, value):
+        # TODO/CHEESE - added due to log errors, but need to determine whether Mute or mute is correct
+        self.log.info("TV set_mute : %s", value)
+
+
     def set_Volume(self, value):
         self.log.info("TV set_volume : %s", value)
         self.Volume.set_value(value)
@@ -488,21 +493,14 @@ class homekit(sofabase):
             return ['DEVICE', 'TEMPERATURE_SENSOR', 'THERMOSTAT', 'LIGHT', 'CONTACT_SENSOR', 'TV']    
     
         def __init__(self, log=None, loop=None, dataset=None, notify=None, request=None, executor=None, config=None, **kwargs):
-            self.config=config
+            super().__init__(log=log, loop=loop, dataset=dataset, config=config)
             self.bridge=None
-            self.dataset=dataset
             self.accessorymap=self.config.accessory_map
-            self.log=log
             self.notify=notify
             self.polltime=5
             self.maxaid=8
             self.executor=executor
             self.skip=['savedState', 'colorTemperatureInKelvin', 'pressState', 'onLevel', 'powerLevel', 'input', 'mode']
-            
-            if not loop:
-                self.loop = asyncio.new_event_loop()
-            else:
-                self.loop=loop
             self.addExtraLogs()
 
 
